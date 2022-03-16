@@ -45,7 +45,7 @@ jobs:
         id: meta
         shell: bash
         run: |
-          echo "##[set-output name=tag;]$(echo ${{ steps.falco.outputs.version }}-ubi8-${{ needs.ubi.outputs.version }})"
+          echo "##[set-output name=tag;]$(echo ${{ steps.falco.outputs.version }}-ubi-${{ needs.ubi.outputs.version }})"
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v1
         with:
@@ -56,8 +56,7 @@ jobs:
         id: docker_build
         uses: docker/build-push-action@v2
         with:
-          context: "{{defaultContext}}:docker/falco"
-          file: Dockerfile.ubi
+          context: "{{defaultContext}}:docker/ubi"
           tags: |
             ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.tag }}
             ghcr.io/${{ github.repository }}:latest
