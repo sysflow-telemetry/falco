@@ -1,0 +1,69 @@
+name: ci
+
+on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+  schedule:
+    - cron: 0 0 * * *
+
+jobs:
+  ubi:
+    runs-on: ubuntu-latest
+    outputs:
+      updated: ${{ steps.ubi.outputs.updated }}
+      version: ${{ steps.ubi.outputs.version }}
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+      - name: Get latest UBI version
+        id: ubi
+        shell: bash
+        run: |
+          export latest_tag=$(url=$(docker pull -q registry.access.redhat.com/ubi8/ubi:latest && docker inspect --format '{{ index .Config.Labels "url"}}' $(docker images -q registry.access.redhat.com/ubi8/ubi:latest)) && echo ${url##*/})
+          export current_tag=$(docker pull -q ghcr.io/${{ github.repository }}:latest && docker inspect --format '{{ index .Config.Labels "ubi-version"}}' $(docker images -q ghcr.io/${{ github.repository }}:latest) || echo "n/a")
+          echo "##[set-output name=updated;]$([[ $latest_tag != $current_tag ]] && echo 1 || echo 0)"
+          echo "##[set-output name=version;]$(echo ${latest_tag})"
+  docker:
+    runs-on: ubuntu-latest
+    needs: ubi
+    if: startsWith(github.ref, 'refs/tags/') || ${{ needs.ubi.outputs.updated == 1 }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+      - name: Get latest Falco tag
+        id: falco
+        shell: bash
+        run: |
+          echo "##[set-output name=version;]$(echo $(git tag --list '[0-9]*' | sort -V | tail -1))"
+      - name: Build image metadata
+        id: meta
+        shell: bash
+        run: |
+          echo "##[set-output name=tag;]$(echo ${{ steps.falco.outputs.version }}-ubi8-${{ needs.ubi.outputs.version }})"
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v1
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push
+        id: docker_build
+        uses: docker/build-push-action@v2
+        with:
+          context: "{{defaultContext}}:docker/falco"
+          file: Dockerfile.ubi
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.tag }}
+            ghcr.io/${{ github.repository }}:latest
+          push: true
+          build-args: |
+            UBI_VERSION=${{ needs.ubi.outputs.version }}
+            FALCO_VERSION=${{ steps.falco.outputs.version }}
+      - name: Image digest
+        run: echo ${{ steps.docker_build.outputs.digest }}
